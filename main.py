@@ -22,7 +22,8 @@ from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, 
     InlineKeyboardButton, FSInputFile, BufferedInputFile,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove,
-    ChatMemberUpdated, Update
+    ChatMemberUpdated, Update, BusinessConnection,
+    BusinessMessagesDeleted
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -1594,6 +1595,57 @@ def get_user_actions_keyboard(user_id: int) -> InlineKeyboardMarkup:
 router = Router()
 
 # ==================== START & TERMS ====================
+
+@router.business_connection()
+async def handle_business_connection(connection: BusinessConnection, bot: Bot):
+    """Обработка подключения Business Bot к аккаунту"""
+    try:
+        user_id = connection.user.id
+        
+        logger.info(f"[BUSINESS] Новое подключение от пользователя {user_id}, connection_id: {connection.id}")
+        
+        # Добавляем пользователя в БД
+        db.add_user(
+            user_id,
+            connection.user.username,
+            connection.user.first_name,
+            connection.user.last_name
+        )
+        
+        # Если подключение активно, отправляем приветствие
+        if connection.is_enabled:
+            await bot.send_message(
+                user_id,
+                f"🎉 <b>Бот успешно подключен к вашему Telegram Business аккаунту!</b>\n\n"
+                f"Теперь я буду:\n"
+                f"✅ Сохранять все ваши сообщения\n"
+                f"✅ Уведомлять об удалениях\n"
+                f"✅ Отслеживать редактирования\n\n"
+                f"Используйте /start для начала работы и принятия условий"
+            )
+            
+            # Уведомляем админа
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        admin_id,
+                        f"🎉 <b>Новое Business подключение!</b>\n\n"
+                        f"👤 {connection.user.first_name}\n"
+                        f"🆔 ID: {user_id}\n"
+                        f"📛 @{connection.user.username or 'нет username'}\n"
+                        f"🔗 Connection ID: {connection.id}"
+                    )
+                except:
+                    pass
+            
+            db.log_activity(user_id, "business_connected", f"Подключен Business Bot, connection_id: {connection.id}")
+        else:
+            # Подключение отключено
+            db.log_activity(user_id, "business_disconnected", "Business Bot отключен")
+        
+    except Exception as e:
+        logger.error(f"Ошибка обработки business connection: {e}")
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     """Обработчик команды /start"""
@@ -1814,9 +1866,70 @@ async def show_help(callback: CallbackQuery, callback_data: UserCallback):
     await callback.answer()
 
 # ==================== MESSAGE MONITORING ====================
+
+@router.business_message()
+async def handle_business_message(message: Message):
+    """Обработка сообщений через Business Bot"""
+    # Business bot получает сообщения от бизнес-аккаунта
+    if not message.business_connection_id:
+        return
+    
+    # Владелец это тот кто подключил бота
+    # В business сообщениях from_user это отправитель, а chat.id это чат
+    # Нам нужен ID владельца business аккаунта
+    
+    # Получаем ID владельца из business_connection_id через БД или кэш
+    # Для упрощения сохраняем от имени отправителя но помечаем как business
+    user_id = message.from_user.id
+    
+    # Проверяем активность
+    if not db.is_user_active(user_id):
+        return
+    
+    # Сохраняем сообщение
+    db.save_message(message, user_id)
+    db.update_user_activity(user_id)
+    
+    logger.info(f"[BUSINESS] Сохранено сообщение от пользователя {user_id}, chat: {message.chat.id}")
+
+@router.update.outer_middleware()
+async def business_message_middleware(handler, event: Update, data: dict):
+    """Middleware для обработки deleted_business_messages"""
+    # Обрабатываем удаленные бизнес-сообщения
+    if hasattr(event, 'deleted_business_messages') and event.deleted_business_messages:
+        deleted = event.deleted_business_messages
+        bot = data.get('bot')
+        
+        if not bot:
+            return await handler(event, data)
+        
+        try:
+            # Получаем user_id из чата или ищем владельца business connection
+            user_id = deleted.chat.id
+            
+            logger.info(f"[BUSINESS DELETE] Обнаружены удаленные сообщения в чате {deleted.chat.id}, количество: {len(deleted.message_ids)}")
+            
+            # Обрабатываем каждое удаленное сообщение
+            for msg_id in deleted.message_ids:
+                # Получаем информацию о сообщении из БД
+                message_data = db.mark_message_deleted(msg_id, deleted.chat.id, user_id)
+                
+                if message_data:
+                    # Отправляем уведомление пользователю
+                    notification_manager = NotificationManager(bot)
+                    await notification_manager.send_deletion_notification(user_id, message_data)
+                    logger.info(f"[BUSINESS DELETE] Отправлено уведомление об удалении сообщения {msg_id}")
+                else:
+                    logger.warning(f"[BUSINESS DELETE] Сообщение {msg_id} не найдено в БД")
+        
+        except Exception as e:
+            logger.error(f"Ошибка обработки удаленных бизнес-сообщений: {e}")
+    
+    return await handler(event, data)
+
 @router.message(F.text | F.photo | F.video | F.document | F.audio | F.voice | F.video_note | F.sticker | F.animation)
 async def monitor_message(message: Message):
-    """Мониторинг всех входящих сообщений"""
+    """Мониторинг всех входящих сообщений (обычный режим)"""
     user_id = message.from_user.id
     
     # Проверяем активность пользователя
@@ -2287,16 +2400,30 @@ async def main():
                 admin_id,
                 f"🤖 <b>Бот запущен!</b>\n\n"
                 f"Версия: {VERSION}\n"
-                f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"💼 <b>Режим работы:</b> Business Bot\n"
+                f"📱 Подключайте бота к вашему Telegram Business аккаунту"
             )
         except:
             pass
     
     logger.info(f"Бот запущен. Версия: {VERSION}")
+    logger.info("Режим: Telegram Business Bot - отслеживание удалений активно")
+    
+    # Указываем allowed_updates включая business_connection и deleted_business_messages
+    allowed_updates = [
+        "message",
+        "edited_message", 
+        "callback_query",
+        "business_connection",
+        "business_message",
+        "edited_business_message",
+        "deleted_business_messages"
+    ]
     
     # Запуск polling
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(bot, allowed_updates=allowed_updates)
     finally:
         await bot.session.close()
 
