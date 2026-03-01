@@ -1,0 +1,2955 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#000000">
+    <title>CHIMERA: Ascension of Pain</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: none;
+        }
+
+    body {
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        background: #0a0a0f;
+        font-family: 'Courier New', monospace;
+        color: #fff;
+    }
+
+    #gameCanvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        image-rendering: crisp-edges;
+        image-rendering: pixelated;
+    }
+
+    #ui {
+        position: fixed;
+        top: 15px;
+        left: 15px;
+        z-index: 1000;
+        pointer-events: none;
+        text-shadow: 2px 2px 8px rgba(0,0,0,0.9);
+        font-size: 16px;
+        line-height: 1.6;
+    }
+
+    #ui div {
+        margin-bottom: 8px;
+        background: rgba(0,0,0,0.5);
+        padding: 4px 10px;
+        border-radius: 4px;
+        display: inline-block;
+    }
+
+    #records {
+        position: fixed;
+        top: 15px;
+        right: 15px;
+        z-index: 1000;
+        pointer-events: none;
+        text-align: right;
+        text-shadow: 2px 2px 8px rgba(0,0,0,0.9);
+        font-size: 14px;
+        line-height: 1.8;
+    }
+
+    #records div {
+        background: rgba(0,0,0,0.5);
+        padding: 4px 10px;
+        border-radius: 4px;
+        margin-bottom: 6px;
+        display: inline-block;
+    }
+
+    #deathScreen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(180, 0, 0, 0.4);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 999;
+        pointer-events: none;
+        font-size: 72px;
+        font-weight: bold;
+        text-shadow: 6px 6px 12px #000;
+        animation: fadeOut 1.2s ease-out forwards;
+    }
+
+    @keyframes fadeOut {
+        0% { opacity: 1; }
+        70% { opacity: 0.8; }
+        100% { opacity: 0; }
+    }
+
+    #instructions {
+        position: fixed;
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000;
+        pointer-events: none;
+        text-align: center;
+        text-shadow: 2px 2px 8px rgba(0,0,0,0.9);
+        font-size: 13px;
+        opacity: 0.8;
+        background: rgba(0,0,0,0.4);
+        padding: 8px 16px;
+        border-radius: 6px;
+    }
+
+    .warning {
+        color: #ff6b6b;
+        animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+    }
+</style>
+
+
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+```
+<div id="ui">
+    <div id="height">Height: <span style="color: #4ecdc4;">0m</span></div>
+    <div id="time">Time: <span style="color: #ffe66d;">0s</span></div>
+    <div id="falls">Falls: <span style="color: #ff6b6b;">0</span></div>
+    <div id="hookHealth">Hook: <span id="hookHealthVal" style="color: #95e1d3;">100%</span></div>
+</div>
+
+<div id="records">
+    <div id="bestHeight">🏆 Best Height: <span style="color: #4ecdc4;">0m</span></div>
+    <div id="bestTime">⚡ Fastest: <span style="color: #ffe66d;">--</span></div>
+    <div id="leastFalls">💎 Least Falls: <span style="color: #95e1d3;">--</span></div>
+</div>
+
+<div id="deathScreen">YOU FELL!</div>
+
+<div id="instructions">
+    <div>PC: <strong>Click & Drag</strong> to launch hook | Mobile: <strong>Touch & Drag</strong></div>
+    <div style="font-size: 11px; margin-top: 4px; opacity: 0.7;">Survive the chaos. Reach the summit.</div>
+</div>
+
+<script>
+    'use strict';
+
+    const CONFIG = {
+        GRAVITY: 0.5,
+        FRICTION: 0.98,
+        AIR_RESISTANCE: 0.996,
+        MAX_VELOCITY: 30,
+        HOOK_LAUNCH_SPEED: 20,
+        HOOK_MAX_LENGTH: 450,
+        HOOK_SPRING_STRENGTH: 0.15,
+        HOOK_DAMPING: 0.88,
+        PLAYER_RADIUS: 14,
+        SEGMENT_LENGTH: 35,
+        CONSTRAINT_STIFFNESS: 0.75,
+        HOOK_DURABILITY_MAX: 100,
+        HOOK_DAMAGE_PER_IMPULSE: 1.2,
+        HOOK_REPAIR_RATE: 0.08,
+        CAMERA_SMOOTHING: 0.12,
+        PLATFORM_THICKNESS: 22,
+        CRUMBLE_TIME: 1.8,
+        PHANTOM_CYCLE: 2.5,
+        WIND_INTERVAL_MIN: 2500,
+        WIND_INTERVAL_MAX: 7000,
+        WIND_DURATION: 1800,
+        WIND_STRENGTH: 0.35,
+        GRAVITY_ZONE_STRENGTH: 0.5,
+        SPRING_PLATFORM_FORCE: 18,
+        DEATH_ZONE_Y: 100,
+        MAP_HEIGHT: 10000,
+        MAP_WIDTH: 1400,
+        ROTATING_OBSTACLE_SPEED: 0.02,
+        DEBUG: false
+    };
+
+    class SoundSystem {
+        constructor() {
+            this.enabled = true;
+            this.volume = 0.3;
+            this.context = null;
+            this.sounds = {};
+            this.init();
+        }
+
+        init() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.context = new AudioContext();
+                this.generateSounds();
+            } catch (e) {
+                console.warn('Audio not supported');
+                this.enabled = false;
+            }
+        }
+
+        generateSounds() {
+            if (!this.enabled) return;
+
+            this.sounds.hookLaunch = this.createTone(400, 0.1, 'sine');
+            this.sounds.hookAttach = this.createTone(600, 0.15, 'square');
+            this.sounds.collision = this.createTone(200, 0.08, 'sawtooth');
+            this.sounds.death = this.createTone(100, 0.5, 'sine');
+            this.sounds.checkpoint = this.createTone(800, 0.3, 'sine');
+        }
+
+        createTone(frequency, duration, type = 'sine') {
+            return { frequency, duration, type };
+        }
+
+        play(soundName) {
+            if (!this.enabled || !this.context) return;
+            
+            const sound = this.sounds[soundName];
+            if (!sound) return;
+
+            try {
+                const oscillator = this.context.createOscillator();
+                const gainNode = this.context.createGain();
+
+                oscillator.connect(gainNode);
+                gainNode.connect(this.context.destination);
+
+                oscillator.type = sound.type;
+                oscillator.frequency.value = sound.frequency;
+
+                gainNode.gain.setValueAtTime(this.volume, this.context.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(
+                    0.01,
+                    this.context.currentTime + sound.duration
+                );
+
+                oscillator.start(this.context.currentTime);
+                oscillator.stop(this.context.currentTime + sound.duration);
+            } catch (e) {
+                console.warn('Sound play failed', e);
+            }
+        }
+
+        toggle() {
+            this.enabled = !this.enabled;
+        }
+    }
+
+    class ComboSystem {
+        constructor() {
+            this.combo = 0;
+            this.maxCombo = 0;
+            this.lastActionTime = 0;
+            this.comboWindow = 3000;
+            this.multiplier = 1;
+        }
+
+        addAction() {
+            const now = Date.now();
+            
+            if (now - this.lastActionTime < this.comboWindow) {
+                this.combo++;
+            } else {
+                this.combo = 1;
+            }
+
+            this.lastActionTime = now;
+            this.maxCombo = Math.max(this.maxCombo, this.combo);
+            this.multiplier = 1 + Math.floor(this.combo / 5) * 0.5;
+        }
+
+        reset() {
+            this.combo = 0;
+            this.multiplier = 1;
+        }
+
+        update() {
+            const now = Date.now();
+            if (now - this.lastActionTime > this.comboWindow && this.combo > 0) {
+                this.reset();
+            }
+        }
+
+        getMultiplier() {
+            return this.multiplier;
+        }
+
+        getCombo() {
+            return this.combo;
+        }
+    }
+
+    class MiniMap {
+        constructor(width, height) {
+            this.width = width;
+            this.height = height;
+            this.scale = 0.05;
+            this.visible = true;
+        }
+
+        draw(ctx, player, platforms, camera, canvasWidth, canvasHeight) {
+            if (!this.visible) return;
+
+            const mapX = canvasWidth - this.width - 20;
+            const mapY = 20;
+
+            ctx.save();
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            ctx.fillRect(mapX, mapY, this.width, this.height);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(mapX, mapY, this.width, this.height);
+
+            ctx.beginPath();
+            ctx.rect(mapX, mapY, this.width, this.height);
+            ctx.clip();
+
+            const centerX = mapX + this.width / 2;
+            const centerY = mapY + this.height / 2;
+
+            for (const platform of platforms) {
+                const px = centerX + (platform.x - player.segment1.pos.x) * this.scale;
+                const py = centerY + (platform.y - player.segment1.pos.y) * this.scale;
+                
+                if (px >= mapX && px <= mapX + this.width &&
+                    py >= mapY && py <= mapY + this.height) {
+                    
+                    ctx.fillStyle = platform.type === 'spring' ? '#00b894' :
+                                  platform.type === 'crumbling' ? '#d63031' :
+                                  platform.type === 'phantom' ? '#6c5ce7' :
+                                  'rgba(255, 255, 255, 0.4)';
+                    
+                    const w = Math.max(2, platform.width * this.scale);
+                    const h = Math.max(2, platform.height * this.scale);
+                    ctx.fillRect(px - w/2, py - h/2, w, h);
+                }
+            }
+
+            ctx.fillStyle = '#74b9ff';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        toggle() {
+            this.visible = !this.visible;
+        }
+    }
+
+    class TutorialSystem {
+        constructor() {
+            this.hints = [
+                { text: "Click & drag to launch your hook", condition: (g) => g.hookLaunches < 3, shown: false },
+                { text: "Hook durability decreases with force!", condition: (g) => g.hookLaunches >= 3 && g.player.hookDurability < 50, shown: false },
+                { text: "Red platforms crumble when touched", condition: (g) => g.maxHeight > 200, shown: false },
+                { text: "Purple platforms phase in and out", condition: (g) => g.maxHeight > 500, shown: false },
+                { text: "Green platforms bounce you upward", condition: (g) => g.maxHeight > 800, shown: false },
+                { text: "Watch out for gravity zones!", condition: (g) => g.maxHeight > 1500, shown: false },
+                { text: "Press SPACE to release your hook", condition: (g) => g.hookLaunches > 10, shown: false },
+                { text: "Wind will push you around randomly", condition: (g) => g.maxHeight > 2000, shown: false }
+            ];
+            this.currentHint = null;
+            this.hintTimer = 0;
+            this.hintDuration = 5000;
+        }
+
+        update(dt, game) {
+            if (this.currentHint) {
+                this.hintTimer += dt * 1000;
+                if (this.hintTimer >= this.hintDuration) {
+                    this.currentHint = null;
+                    this.hintTimer = 0;
+                }
+                return;
+            }
+
+            for (const hint of this.hints) {
+                if (!hint.shown && hint.condition(game)) {
+                    this.currentHint = hint;
+                    hint.shown = true;
+                    this.hintTimer = 0;
+                    break;
+                }
+            }
+        }
+
+        draw(ctx, canvasWidth, canvasHeight) {
+            if (!this.currentHint) return;
+
+            const alpha = this.hintTimer < 500 ? this.hintTimer / 500 :
+                         this.hintTimer > this.hintDuration - 500 ? 
+                         (this.hintDuration - this.hintTimer) / 500 : 1;
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+
+            const text = this.currentHint.text;
+            ctx.font = '18px Courier New';
+            const metrics = ctx.measureText(text);
+            const textWidth = metrics.width;
+
+            const x = canvasWidth / 2;
+            const y = canvasHeight - 80;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(x - textWidth/2 - 20, y - 20, textWidth + 40, 40);
+
+            ctx.strokeStyle = 'rgba(253, 203, 110, 0.8)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x - textWidth/2 - 20, y - 20, textWidth + 40, 40);
+
+            ctx.fillStyle = '#fdcb6e';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, x, y);
+
+            ctx.restore();
+        }
+    }
+
+    class ScreenShake {
+        constructor() {
+            this.intensity = 0;
+            this.duration = 0;
+            this.timer = 0;
+        }
+
+        trigger(intensity, duration) {
+            this.intensity = intensity;
+            this.duration = duration;
+            this.timer = 0;
+        }
+
+        update(dt) {
+            if (this.timer < this.duration) {
+                this.timer += dt;
+                return true;
+            }
+            return false;
+        }
+
+        getOffset() {
+            if (this.timer >= this.duration) {
+                return { x: 0, y: 0 };
+            }
+
+            const progress = this.timer / this.duration;
+            const currentIntensity = this.intensity * (1 - progress);
+
+            return {
+                x: (Math.random() - 0.5) * currentIntensity * 2,
+                y: (Math.random() - 0.5) * currentIntensity * 2
+            };
+        }
+    }
+
+    class AnimationSystem {
+        constructor() {
+            this.animations = [];
+        }
+
+        add(animation) {
+            this.animations.push(animation);
+        }
+
+        update(dt) {
+            for (let i = this.animations.length - 1; i >= 0; i--) {
+                const anim = this.animations[i];
+                anim.time += dt;
+                
+                if (anim.time >= anim.duration) {
+                    this.animations.splice(i, 1);
+                }
+            }
+        }
+
+        draw(ctx, camera) {
+            for (const anim of this.animations) {
+                anim.draw(ctx, camera);
+            }
+        }
+    }
+
+    class TextAnimation {
+        constructor(x, y, text, color, size, duration = 1.0) {
+            this.x = x;
+            this.y = y;
+            this.startY = y;
+            this.text = text;
+            this.color = color;
+            this.size = size;
+            this.duration = duration;
+            this.time = 0;
+        }
+
+        draw(ctx, camera) {
+            const progress = this.time / this.duration;
+            const alpha = 1 - progress;
+            const yOffset = progress * 50;
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = this.color;
+            ctx.font = `bold ${this.size}px Courier New`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(
+                this.text,
+                this.x - camera.x,
+                this.startY - yOffset - camera.y
+            );
+            ctx.restore();
+        }
+    }
+
+    class ProgressBar {
+        constructor(x, y, width, height, color, backgroundColor) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.color = color;
+            this.backgroundColor = backgroundColor;
+            this.value = 1.0;
+            this.targetValue = 1.0;
+        }
+
+        setValue(value) {
+            this.targetValue = clamp(value, 0, 1);
+        }
+
+        update(dt) {
+            this.value = lerp(this.value, this.targetValue, 0.1);
+        }
+
+        draw(ctx) {
+            ctx.save();
+
+            ctx.fillStyle = this.backgroundColor;
+            ctx.fillRect(this.x, this.y, this.width, this.height);
+
+            ctx.fillStyle = this.color;
+            ctx.fillRect(this.x, this.y, this.width * this.value, this.height);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(this.x, this.y, this.width, this.height);
+
+            ctx.restore();
+        }
+    }
+
+    class Vec2 {
+        constructor(x = 0, y = 0) {
+            this.x = x;
+            this.y = y;
+        }
+
+        add(v) {
+            this.x += v.x;
+            this.y += v.y;
+            return this;
+        }
+
+        sub(v) {
+            this.x -= v.x;
+            this.y -= v.y;
+            return this;
+        }
+
+        mult(s) {
+            this.x *= s;
+            this.y *= s;
+            return this;
+        }
+
+        mag() {
+            return Math.sqrt(this.x * this.x + this.y * this.y);
+        }
+
+        normalize() {
+            const m = this.mag();
+            if (m > 0) {
+                this.x /= m;
+                this.y /= m;
+            }
+            return this;
+        }
+
+        limit(max) {
+            const m = this.mag();
+            if (m > max) {
+                this.normalize().mult(max);
+            }
+            return this;
+        }
+
+        copy() {
+            return new Vec2(this.x, this.y);
+        }
+
+        dist(v) {
+            const dx = this.x - v.x;
+            const dy = this.y - v.y;
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+
+        heading() {
+            return Math.atan2(this.y, this.x);
+        }
+
+        static sub(v1, v2) {
+            return new Vec2(v1.x - v2.x, v1.y - v2.y);
+        }
+
+        static add(v1, v2) {
+            return new Vec2(v1.x + v2.x, v1.y + v2.y);
+        }
+
+        static mult(v, s) {
+            return new Vec2(v.x * s, v.y * s);
+        }
+
+        static dot(v1, v2) {
+            return v1.x * v2.x + v1.y * v2.y;
+        }
+
+        static fromAngle(angle, len = 1) {
+            return new Vec2(Math.cos(angle) * len, Math.sin(angle) * len);
+        }
+    }
+
+    function clamp(val, min, max) {
+        return Math.min(Math.max(val, min), max);
+    }
+
+    function lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    function random(min, max) {
+        return Math.random() * (max - min) + min;
+    }
+
+    function randomInt(min, max) {
+        return Math.floor(random(min, max + 1));
+    }
+
+    class SaveSystem {
+        constructor() {
+            this.key = 'chimera_save_v1';
+            this.checksumKey = 'chimera_checksum_v1';
+        }
+
+        save(data) {
+            try {
+                const str = JSON.stringify(data);
+                const checksum = this.generateChecksum(str);
+                localStorage.setItem(this.key, str);
+                localStorage.setItem(this.checksumKey, checksum);
+                return true;
+            } catch (e) {
+                console.error('Save failed:', e);
+                return false;
+            }
+        }
+
+        load() {
+            try {
+                const str = localStorage.getItem(this.key);
+                const checksum = localStorage.getItem(this.checksumKey);
+                
+                if (!str) return null;
+                
+                if (this.generateChecksum(str) !== checksum) {
+                    console.warn('Checksum mismatch');
+                    return null;
+                }
+                
+                return JSON.parse(str);
+            } catch (e) {
+                console.error('Load failed:', e);
+                return null;
+            }
+        }
+
+        generateChecksum(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            return hash.toString(36);
+        }
+
+        clear() {
+            localStorage.removeItem(this.key);
+            localStorage.removeItem(this.checksumKey);
+        }
+    }
+
+    class Body {
+        constructor(x, y, radius, mass = 1, fixed = false) {
+            this.pos = new Vec2(x, y);
+            this.vel = new Vec2(0, 0);
+            this.acc = new Vec2(0, 0);
+            this.radius = radius;
+            this.mass = mass;
+            this.fixed = fixed;
+            this.angle = 0;
+            this.angularVel = 0;
+            this.angularAcc = 0;
+            this.restitution = 0.3;
+            this.friction = 0.8;
+        }
+
+        applyForce(force) {
+            if (!this.fixed) {
+                const f = Vec2.mult(force, 1 / this.mass);
+                this.acc.add(f);
+            }
+        }
+
+        update() {
+            if (this.fixed) return;
+
+            this.vel.add(this.acc);
+            this.vel.mult(CONFIG.AIR_RESISTANCE);
+            this.vel.limit(CONFIG.MAX_VELOCITY);
+            
+            this.pos.add(this.vel);
+            
+            this.angularVel += this.angularAcc;
+            this.angularVel *= 0.95;
+            this.angle += this.angularVel;
+            
+            this.acc.mult(0);
+            this.angularAcc = 0;
+        }
+    }
+
+    class Constraint {
+        constructor(bodyA, bodyB, length, stiffness = 1) {
+            this.bodyA = bodyA;
+            this.bodyB = bodyB;
+            this.length = length;
+            this.stiffness = stiffness;
+            this.active = true;
+        }
+
+        solve() {
+            if (!this.active) return;
+
+            const diff = Vec2.sub(this.bodyB.pos, this.bodyA.pos);
+            const dist = diff.mag();
+            const error = dist - this.length;
+
+            if (error === 0) return;
+
+            const correction = diff.normalize().mult(error * this.stiffness);
+
+            if (!this.bodyA.fixed && !this.bodyB.fixed) {
+                this.bodyA.pos.add(Vec2.mult(correction, 0.5));
+                this.bodyB.pos.sub(Vec2.mult(correction, 0.5));
+            } else if (!this.bodyA.fixed) {
+                this.bodyA.pos.add(correction);
+            } else if (!this.bodyB.fixed) {
+                this.bodyB.pos.sub(correction);
+            }
+        }
+    }
+
+    class Platform {
+        constructor(x, y, width, height, type = 'normal') {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.type = type;
+            this.angle = 0;
+            this.crumbleTimer = 0;
+            this.phantomTimer = 0;
+            this.destroyed = false;
+            this.angularSpeed = 0;
+            
+            if (type === 'rotating') {
+                this.angularSpeed = random(-CONFIG.ROTATING_OBSTACLE_SPEED, CONFIG.ROTATING_OBSTACLE_SPEED);
+                if (Math.abs(this.angularSpeed) < 0.01) {
+                    this.angularSpeed = 0.015;
+                }
+            }
+        }
+
+        update(dt) {
+            if (this.type === 'crumbling' && this.crumbleTimer > 0) {
+                this.crumbleTimer -= dt;
+                if (this.crumbleTimer <= 0) {
+                    this.destroyed = true;
+                }
+            }
+
+            if (this.type === 'phantom') {
+                this.phantomTimer += dt;
+                if (this.phantomTimer >= CONFIG.PHANTOM_CYCLE * 2) {
+                    this.phantomTimer = 0;
+                }
+            }
+
+            if (this.type === 'rotating') {
+                this.angle += this.angularSpeed;
+            }
+        }
+
+        isPhantom() {
+            return this.type === 'phantom' && this.phantomTimer > CONFIG.PHANTOM_CYCLE;
+        }
+
+        isSolid() {
+            if (this.destroyed) return false;
+            if (this.isPhantom()) return false;
+            return true;
+        }
+
+        startCrumble() {
+            if (this.type === 'crumbling' && this.crumbleTimer === 0) {
+                this.crumbleTimer = CONFIG.CRUMBLE_TIME;
+            }
+        }
+
+        checkCollision(body) {
+            if (!this.isSolid()) return false;
+
+            if (this.angle === 0) {
+                const halfW = this.width / 2;
+                const halfH = this.height / 2;
+                
+                const closestX = clamp(body.pos.x, this.x - halfW, this.x + halfW);
+                const closestY = clamp(body.pos.y, this.y - halfH, this.y + halfH);
+                
+                const dx = body.pos.x - closestX;
+                const dy = body.pos.y - closestY;
+                const distSq = dx * dx + dy * dy;
+                
+                if (distSq < body.radius * body.radius) {
+                    const dist = Math.sqrt(distSq);
+                    const overlap = body.radius - dist;
+                    
+                    if (dist > 0) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        
+                        body.pos.x += nx * overlap;
+                        body.pos.y += ny * overlap;
+                        
+                        const dot = body.vel.x * nx + body.vel.y * ny;
+                        body.vel.x -= nx * dot * (1 + body.restitution);
+                        body.vel.y -= ny * dot * (1 + body.restitution);
+                        body.vel.mult(body.friction);
+                    }
+                    
+                    if (this.type === 'crumbling') {
+                        this.startCrumble();
+                    }
+                    
+                    if (this.type === 'spring') {
+                        body.vel.y = -CONFIG.SPRING_PLATFORM_FORCE;
+                    }
+                    
+                    return true;
+                }
+            } else {
+                const cos = Math.cos(-this.angle);
+                const sin = Math.sin(-this.angle);
+                
+                const dx = body.pos.x - this.x;
+                const dy = body.pos.y - this.y;
+                
+                const localX = dx * cos - dy * sin;
+                const localY = dx * sin + dy * cos;
+                
+                const halfW = this.width / 2;
+                const halfH = this.height / 2;
+                
+                const closestX = clamp(localX, -halfW, halfW);
+                const closestY = clamp(localY, -halfH, halfH);
+                
+                const distX = localX - closestX;
+                const distY = localY - closestY;
+                const distSq = distX * distX + distY * distY;
+                
+                if (distSq < body.radius * body.radius) {
+                    const dist = Math.sqrt(distSq);
+                    const overlap = body.radius - dist;
+                    
+                    if (dist > 0) {
+                        const localNX = distX / dist;
+                        const localNY = distY / dist;
+                        
+                        const worldNX = localNX * cos + localNY * sin;
+                        const worldNY = -localNX * sin + localNY * cos;
+                        
+                        body.pos.x += worldNX * overlap;
+                        body.pos.y += worldNY * overlap;
+                        
+                        const dot = body.vel.x * worldNX + body.vel.y * worldNY;
+                        body.vel.x -= worldNX * dot * (1 + body.restitution);
+                        body.vel.y -= worldNY * dot * (1 + body.restitution);
+                        body.vel.mult(0.7);
+                    }
+                    
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        draw(ctx, camera) {
+            if (!this.isSolid() && this.type !== 'phantom') return;
+
+            ctx.save();
+            ctx.translate(this.x - camera.x, this.y - camera.y);
+            ctx.rotate(this.angle);
+
+            if (this.type === 'phantom') {
+                ctx.globalAlpha = this.isPhantom() ? 0.2 : 1.0;
+            }
+
+            if (this.type === 'crumbling' && this.crumbleTimer > 0) {
+                ctx.globalAlpha = this.crumbleTimer / CONFIG.CRUMBLE_TIME;
+            }
+
+            let color = '#2d3436';
+            if (this.type === 'spring') color = '#00b894';
+            if (this.type === 'crumbling') color = '#d63031';
+            if (this.type === 'phantom') color = '#6c5ce7';
+            if (this.type === 'rotating') color = '#fdcb6e';
+
+            ctx.fillStyle = color;
+            ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+
+            ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(-this.width/2, -this.height/2, this.width, this.height);
+
+            ctx.restore();
+        }
+    }
+
+    class GravityZone {
+        constructor(x, y, radius, strength, dirX, dirY) {
+            this.x = x;
+            this.y = y;
+            this.radius = radius;
+            this.strength = strength;
+            this.dir = new Vec2(dirX, dirY).normalize();
+        }
+
+        applyForce(body) {
+            const dx = body.pos.x - this.x;
+            const dy = body.pos.y - this.y;
+            const distSq = dx * dx + dy * dy;
+            
+            if (distSq < this.radius * this.radius) {
+                const force = Vec2.mult(this.dir, this.strength);
+                body.applyForce(force);
+            }
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            ctx.globalAlpha = 0.15;
+            ctx.fillStyle = '#e84393';
+            ctx.beginPath();
+            ctx.arc(this.x - camera.x, this.y - camera.y, this.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(232, 67, 147, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(this.x - camera.x, this.y - camera.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+
+    class PendulumObstacle {
+        constructor(anchorX, anchorY, length, radius, mass) {
+            this.anchor = new Vec2(anchorX, anchorY);
+            this.body = new Body(anchorX, anchorY + length, radius, mass);
+            this.length = length;
+            this.constraint = new Constraint(
+                { pos: this.anchor, fixed: true },
+                this.body,
+                length,
+                1.0
+            );
+            
+            this.body.vel.x = random(-2, 2);
+        }
+
+        update() {
+            this.body.applyForce(new Vec2(0, CONFIG.GRAVITY * this.body.mass));
+            this.body.update();
+            this.constraint.solve();
+        }
+
+        checkCollision(body) {
+            const dx = body.pos.x - this.body.pos.x;
+            const dy = body.pos.y - this.body.pos.y;
+            const distSq = dx * dx + dy * dy;
+            const minDist = body.radius + this.body.radius;
+            
+            if (distSq < minDist * minDist) {
+                const dist = Math.sqrt(distSq);
+                const overlap = minDist - dist;
+                
+                if (dist > 0) {
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    
+                    body.pos.x += nx * overlap;
+                    body.pos.y += ny * overlap;
+                    
+                    const relVelX = body.vel.x - this.body.vel.x;
+                    const relVelY = body.vel.y - this.body.vel.y;
+                    const impulse = (relVelX * nx + relVelY * ny) * 1.5;
+                    
+                    body.vel.x -= nx * impulse;
+                    body.vel.y -= ny * impulse;
+                    
+                    this.body.vel.x += nx * impulse * 0.5;
+                    this.body.vel.y += ny * impulse * 0.5;
+                }
+                
+                return true;
+            }
+            
+            return false;
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            ctx.strokeStyle = '#636e72';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(this.anchor.x - camera.x, this.anchor.y - camera.y);
+            ctx.lineTo(this.body.pos.x - camera.x, this.body.pos.y - camera.y);
+            ctx.stroke();
+            ctx.restore();
+
+            ctx.save();
+            ctx.fillStyle = '#b2bec3';
+            ctx.beginPath();
+            ctx.arc(
+                this.body.pos.x - camera.x,
+                this.body.pos.y - camera.y,
+                this.body.radius,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+            ctx.strokeStyle = '#2d3436';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
+
+    class Player {
+        constructor(x, y) {
+            this.segment1 = new Body(x, y, CONFIG.PLAYER_RADIUS, 1);
+            this.segment2 = new Body(x, y + CONFIG.SEGMENT_LENGTH, CONFIG.PLAYER_RADIUS, 1.2);
+            
+            this.constraint = new Constraint(
+                this.segment1,
+                this.segment2,
+                CONFIG.SEGMENT_LENGTH,
+                CONFIG.CONSTRAINT_STIFFNESS
+            );
+
+            this.hook = null;
+            this.hookPoint = null;
+            this.hookConstraint = null;
+            this.hookLaunching = false;
+            this.hookVel = new Vec2(0, 0);
+            this.hookDurability = CONFIG.HOOK_DURABILITY_MAX;
+            
+            this.spawnPoint = new Vec2(x, y);
+            this.trail = new Trail(25);
+            this.invincible = false;
+            this.invincibleTimer = 0;
+        }
+
+        launchHook(targetX, targetY) {
+            if (this.hook) return;
+
+            this.hookLaunching = true;
+            this.hook = new Body(
+                this.segment1.pos.x,
+                this.segment1.pos.y,
+                5,
+                0.2
+            );
+
+            const dx = targetX - this.hook.pos.x;
+            const dy = targetY - this.hook.pos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            this.hookVel.x = (dx / dist) * CONFIG.HOOK_LAUNCH_SPEED;
+            this.hookVel.y = (dy / dist) * CONFIG.HOOK_LAUNCH_SPEED;
+        }
+
+        updateHook(platforms, movingPlatforms) {
+            if (!this.hook) return;
+
+            if (this.hookLaunching) {
+                this.hook.pos.x += this.hookVel.x;
+                this.hook.pos.y += this.hookVel.y;
+
+                const dist = this.hook.pos.dist(this.segment1.pos);
+                
+                if (dist > CONFIG.HOOK_MAX_LENGTH) {
+                    this.releaseHook();
+                    return;
+                }
+
+                const allPlatforms = [...platforms, ...movingPlatforms];
+
+                for (const platform of allPlatforms) {
+                    if (!platform.isSolid()) continue;
+
+                    const dx = this.hook.pos.x - platform.x;
+                    const dy = this.hook.pos.y - platform.y;
+                    
+                    if (Math.abs(dx) < platform.width/2 + 5 &&
+                        Math.abs(dy) < platform.height/2 + 5) {
+                        
+                        this.hookPoint = this.hook.pos.copy();
+                        this.hookLaunching = false;
+                        
+                        this.hookConstraint = new Constraint(
+                            { pos: this.hookPoint, fixed: true },
+                            this.segment1,
+                            dist,
+                            CONFIG.HOOK_SPRING_STRENGTH
+                        );
+                        
+                        return;
+                    }
+                }
+            } else if (this.hookConstraint) {
+                const dist = this.hookPoint.dist(this.segment1.pos);
+                this.hookConstraint.length = dist;
+                this.hookConstraint.solve();
+
+                const impulse = this.segment1.vel.mag();
+                if (impulse > 5) {
+                    this.hookDurability -= impulse * CONFIG.HOOK_DAMAGE_PER_IMPULSE * 0.01;
+                    
+                    if (this.hookDurability <= 0) {
+                        this.releaseHook();
+                        return;
+                    }
+                }
+
+                this.segment1.vel.mult(CONFIG.HOOK_DAMPING);
+            }
+
+            if (this.hookDurability < CONFIG.HOOK_DURABILITY_MAX) {
+                this.hookDurability += CONFIG.HOOK_REPAIR_RATE;
+                this.hookDurability = Math.min(this.hookDurability, CONFIG.HOOK_DURABILITY_MAX);
+            }
+        }
+
+        releaseHook() {
+            this.hook = null;
+            this.hookPoint = null;
+            this.hookConstraint = null;
+            this.hookLaunching = false;
+            this.hookVel.mult(0);
+        }
+
+        update(gravityZones, dt) {
+            if (this.invincibleTimer > 0) {
+                this.invincibleTimer -= dt;
+                if (this.invincibleTimer <= 0) {
+                    this.invincible = false;
+                }
+            }
+
+            let gravity = new Vec2(0, CONFIG.GRAVITY);
+
+            for (const zone of gravityZones) {
+                zone.applyForce(this.segment1);
+                zone.applyForce(this.segment2);
+            }
+
+            this.segment1.applyForce(Vec2.mult(gravity, this.segment1.mass));
+            this.segment2.applyForce(Vec2.mult(gravity, this.segment2.mass));
+
+            this.segment1.update();
+            this.segment2.update();
+
+            this.constraint.solve();
+
+            if (this.segment1.pos.x < -CONFIG.MAP_WIDTH/2) {
+                this.segment1.pos.x = -CONFIG.MAP_WIDTH/2;
+                this.segment1.vel.x = Math.abs(this.segment1.vel.x) * 0.5;
+            }
+            if (this.segment1.pos.x > CONFIG.MAP_WIDTH/2) {
+                this.segment1.pos.x = CONFIG.MAP_WIDTH/2;
+                this.segment1.vel.x = -Math.abs(this.segment1.vel.x) * 0.5;
+            }
+
+            if (this.segment2.pos.x < -CONFIG.MAP_WIDTH/2) {
+                this.segment2.pos.x = -CONFIG.MAP_WIDTH/2;
+                this.segment2.vel.x = Math.abs(this.segment2.vel.x) * 0.5;
+            }
+            if (this.segment2.pos.x > CONFIG.MAP_WIDTH/2) {
+                this.segment2.pos.x = CONFIG.MAP_WIDTH/2;
+                this.segment2.vel.x = -Math.abs(this.segment2.vel.x) * 0.5;
+            }
+
+            this.trail.update(this.segment1.pos.x, this.segment1.pos.y);
+        }
+
+        checkDeath() {
+            if (this.invincible) return false;
+            return this.segment2.pos.y > CONFIG.DEATH_ZONE_Y;
+        }
+
+        respawn() {
+            this.segment1.pos = this.spawnPoint.copy();
+            this.segment2.pos = new Vec2(
+                this.spawnPoint.x,
+                this.spawnPoint.y + CONFIG.SEGMENT_LENGTH
+            );
+            this.segment1.vel.mult(0);
+            this.segment2.vel.mult(0);
+            this.segment1.acc.mult(0);
+            this.segment2.acc.mult(0);
+            this.releaseHook();
+            this.hookDurability = CONFIG.HOOK_DURABILITY_MAX;
+            this.trail.clear();
+            this.invincible = true;
+            this.invincibleTimer = 1.5;
+        }
+
+        getHeight() {
+            return -this.segment1.pos.y;
+        }
+
+        draw(ctx, camera) {
+            this.trail.draw(ctx, camera, '#74b9ff', 0.4);
+
+            ctx.save();
+            ctx.strokeStyle = '#74b9ff';
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(
+                this.segment1.pos.x - camera.x,
+                this.segment1.pos.y - camera.y
+            );
+            ctx.lineTo(
+                this.segment2.pos.x - camera.x,
+                this.segment2.pos.y - camera.y
+            );
+            ctx.stroke();
+            ctx.restore();
+
+            const drawSegment = (segment, color1, color2) => {
+                ctx.save();
+
+                if (this.invincible) {
+                    ctx.globalAlpha = 0.5 + Math.sin(Date.now() * 0.01) * 0.5;
+                }
+
+                const gradient = ctx.createRadialGradient(
+                    segment.pos.x - camera.x,
+                    segment.pos.y - camera.y,
+                    0,
+                    segment.pos.x - camera.x,
+                    segment.pos.y - camera.y,
+                    segment.radius
+                );
+                gradient.addColorStop(0, color1);
+                gradient.addColorStop(1, color2);
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(
+                    segment.pos.x - camera.x,
+                    segment.pos.y - camera.y,
+                    segment.radius,
+                    0,
+                    Math.PI * 2
+                );
+                ctx.fill();
+                ctx.strokeStyle = '#2d3436';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+            };
+
+            drawSegment(this.segment1, '#0984e3', '#74b9ff');
+            drawSegment(this.segment2, '#6c5ce7', '#a29bfe');
+
+            if (this.hook) {
+                ctx.save();
+                
+                if (this.hookLaunching) {
+                    ctx.strokeStyle = 'rgba(253, 203, 110, 0.6)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([5, 5]);
+                } else {
+                    const healthRatio = this.hookDurability / CONFIG.HOOK_DURABILITY_MAX;
+                    let color = '#00b894';
+                    if (healthRatio < 0.5) color = '#fdcb6e';
+                    if (healthRatio < 0.25) color = '#d63031';
+                    
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 3;
+                }
+                
+                ctx.beginPath();
+                ctx.moveTo(
+                    this.segment1.pos.x - camera.x,
+                    this.segment1.pos.y - camera.y
+                );
+                
+                if (this.hookLaunching) {
+                    ctx.lineTo(
+                        this.hook.pos.x - camera.x,
+                        this.hook.pos.y - camera.y
+                    );
+                } else if (this.hookPoint) {
+                    ctx.lineTo(
+                        this.hookPoint.x - camera.x,
+                        this.hookPoint.y - camera.y
+                    );
+                }
+                
+                ctx.stroke();
+                ctx.restore();
+
+                if (this.hookPoint) {
+                    ctx.save();
+                    ctx.fillStyle = '#ffeaa7';
+                    ctx.beginPath();
+                    ctx.arc(
+                        this.hookPoint.x - camera.x,
+                        this.hookPoint.y - camera.y,
+                        6,
+                        0,
+                        Math.PI * 2
+                    );
+                    ctx.fill();
+                    ctx.strokeStyle = '#2d3436';
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            }
+        }
+    }
+
+    class MapGenerator {
+        constructor() {
+            this.platforms = [];
+            this.gravityZones = [];
+            this.pendulums = [];
+            this.iceZones = [];
+            this.slowZones = [];
+            this.movingPlatforms = [];
+            this.checkpoints = [];
+            this.lasers = [];
+            this.teleporters = [];
+            this.generate();
+        }
+
+        generate() {
+            this.platforms.push(new Platform(0, 0, 200, CONFIG.PLATFORM_THICKNESS, 'normal'));
+
+            let currentY = -150;
+            let segments = 80;
+            let difficulty = 0;
+
+            for (let i = 0; i < segments; i++) {
+                difficulty = i / segments;
+                const segmentHeight = random(180 + difficulty * 100, 350 + difficulty * 150);
+                this.generateSegment(currentY, segmentHeight, difficulty);
+                currentY -= segmentHeight;
+
+                if (i % 10 === 0 && i > 0) {
+                    this.checkpoints.push(new Checkpoint(
+                        random(-200, 200),
+                        currentY + segmentHeight / 2
+                    ));
+                }
+            }
+
+            for (let i = 0; i < 12; i++) {
+                const zoneY = random(-2000, -10000);
+                const zoneX = random(-500, 500);
+                const dirAngle = random(0, Math.PI * 2);
+                const dirX = Math.cos(dirAngle);
+                const dirY = Math.sin(dirAngle);
+                
+                this.gravityZones.push(
+                    new GravityZone(
+                        zoneX,
+                        zoneY,
+                        random(150, 350),
+                        CONFIG.GRAVITY_ZONE_STRENGTH * (1 + difficulty * 0.5),
+                        dirX,
+                        dirY
+                    )
+                );
+            }
+
+            for (let i = 0; i < 15; i++) {
+                const pendY = random(-1500, -10000);
+                const pendX = random(-550, 550);
+                
+                this.pendulums.push(
+                    new PendulumObstacle(
+                        pendX,
+                        pendY,
+                        random(80, 200),
+                        random(20, 45),
+                        random(2, 6)
+                    )
+                );
+            }
+
+            for (let i = 0; i < 8; i++) {
+                const iceY = random(-2500, -9000);
+                const iceX = random(-450, 450);
+                this.iceZones.push(new IceZone(
+                    iceX,
+                    iceY,
+                    random(150, 300),
+                    random(100, 200)
+                ));
+            }
+
+            for (let i = 0; i < 10; i++) {
+                const slowY = random(-2000, -9500);
+                const slowX = random(-500, 500);
+                this.slowZones.push(new SlowZone(
+                    slowX,
+                    slowY,
+                    random(120, 250),
+                    random(0.4, 0.7)
+                ));
+            }
+
+            for (let i = 0; i < 20; i++) {
+                const moveY = random(-2000, -9500);
+                const moveX1 = random(-550, 550);
+                const moveX2 = moveX1 + random(-200, 200);
+                const moveY2 = moveY + random(-100, 100);
+                const speed = random(0.3, 0.8);
+                
+                const types = ['normal', 'crumbling', 'phantom'];
+                const type = types[randomInt(0, types.length - 1)];
+                
+                this.movingPlatforms.push(new MovingPlatform(
+                    moveX1, moveY,
+                    random(100, 180),
+                    CONFIG.PLATFORM_THICKNESS,
+                    moveX2, moveY2,
+                    speed,
+                    type
+                ));
+            }
+
+            for (let i = 0; i < 8; i++) {
+                const laserY = random(-3000, -9000);
+                const side = Math.random() < 0.5 ? -1 : 1;
+                const x1 = side * CONFIG.MAP_WIDTH / 2;
+                const x2 = -side * CONFIG.MAP_WIDTH / 2;
+                
+                this.lasers.push(new LaserBeam(
+                    x1, laserY,
+                    x2, laserY,
+                    random(1.5, 3.0),
+                    random(1.5, 3.0)
+                ));
+            }
+
+            for (let i = 0; i < 5; i++) {
+                const tpY1 = random(-3000, -8000);
+                const tpY2 = tpY1 + random(-500, -1000);
+                const tpX1 = random(-400, 400);
+                const tpX2 = random(-400, 400);
+                
+                this.teleporters.push(new Teleporter(
+                    tpX1, tpY1,
+                    tpX2, tpY2
+                ));
+            }
+        }
+
+        generateSegment(startY, height, difficulty) {
+            const numPlatforms = randomInt(3 + Math.floor(difficulty * 2), 8 + Math.floor(difficulty * 3));
+            const endY = startY - height;
+
+            for (let i = 0; i < numPlatforms; i++) {
+                const y = lerp(startY, endY, (i + 1) / numPlatforms);
+                const x = random(-CONFIG.MAP_WIDTH/2 + 100, CONFIG.MAP_WIDTH/2 - 100);
+                const width = random(70 - difficulty * 20, 200 - difficulty * 50);
+                
+                let types = ['normal', 'normal', 'crumbling', 'phantom', 'spring'];
+                if (difficulty > 0.3) types.push('rotating');
+                if (difficulty > 0.5) {
+                    types.push('crumbling');
+                    types.push('phantom');
+                }
+                
+                const type = types[randomInt(0, types.length - 1)];
+                
+                this.platforms.push(new Platform(x, y, width, CONFIG.PLATFORM_THICKNESS, type));
+            }
+
+            if (Math.random() < 0.3 + difficulty * 0.3) {
+                const hazardY = lerp(startY, endY, random(0.3, 0.7));
+                const hazardX = random(-CONFIG.MAP_WIDTH/2 + 100, CONFIG.MAP_WIDTH/2 - 100);
+                this.platforms.push(
+                    new Platform(hazardX, hazardY, 50 + difficulty * 30, 50 + difficulty * 30, 'rotating')
+                );
+            }
+
+            if (Math.random() < difficulty * 0.4) {
+                const gapY = lerp(startY, endY, random(0.2, 0.8));
+                for (let j = 0; j < 3; j++) {
+                    const smallX = random(-CONFIG.MAP_WIDTH/2 + 150, CONFIG.MAP_WIDTH/2 - 150);
+                    const smallW = random(40, 70);
+                    this.platforms.push(
+                        new Platform(smallX, gapY + j * 80, smallW, CONFIG.PLATFORM_THICKNESS, 'crumbling')
+                    );
+                }
+            }
+        }
+
+        update(dt, player, particles) {
+            for (const platform of this.platforms) {
+                platform.update(dt);
+            }
+
+            for (const movingPlatform of this.movingPlatforms) {
+                movingPlatform.update(dt);
+            }
+
+            for (const pendulum of this.pendulums) {
+                pendulum.update();
+            }
+
+            for (const iceZone of this.iceZones) {
+                iceZone.update(dt);
+                iceZone.applyEffect(player.segment1);
+                iceZone.applyEffect(player.segment2);
+            }
+
+            for (const slowZone of this.slowZones) {
+                slowZone.update(dt);
+                slowZone.applyEffect(player.segment1);
+                slowZone.applyEffect(player.segment2);
+            }
+
+            for (const checkpoint of this.checkpoints) {
+                if (checkpoint.update(dt, player)) {
+                    player.spawnPoint = new Vec2(checkpoint.x, checkpoint.y);
+                    particles.emit(checkpoint.x, checkpoint.y, 30, '#00b894', 8);
+                }
+            }
+
+            for (const laser of this.lasers) {
+                laser.update(dt);
+            }
+
+            for (const teleporter of this.teleporters) {
+                teleporter.update(dt);
+                if (teleporter.checkTeleport(player.segment1)) {
+                    particles.emit(player.segment1.pos.x, player.segment1.pos.y, 40, '#00cec9', 12);
+                }
+                if (teleporter.checkTeleport(player.segment2)) {
+                    particles.emit(player.segment2.pos.x, player.segment2.pos.y, 40, '#00cec9', 12);
+                }
+            }
+        }
+
+        checkCollisions(player, particles) {
+            let collided = false;
+
+            for (const platform of this.platforms) {
+                if (platform.checkCollision(player.segment1)) {
+                    collided = true;
+                    if (platform.type === 'spring') {
+                        particles.emitDirectional(
+                            player.segment1.pos.x,
+                            player.segment1.pos.y,
+                            15,
+                            '#00b894',
+                            0, -1, 0.3
+                        );
+                    }
+                }
+                if (platform.checkCollision(player.segment2)) {
+                    collided = true;
+                    if (platform.type === 'spring') {
+                        particles.emitDirectional(
+                            player.segment2.pos.x,
+                            player.segment2.pos.y,
+                            15,
+                            '#00b894',
+                            0, -1, 0.3
+                        );
+                    }
+                }
+            }
+
+            for (const movingPlatform of this.movingPlatforms) {
+                movingPlatform.checkCollision(player.segment1);
+                movingPlatform.checkCollision(player.segment2);
+            }
+
+            for (const pendulum of this.pendulums) {
+                if (pendulum.checkCollision(player.segment1)) {
+                    particles.emit(player.segment1.pos.x, player.segment1.pos.y, 8, '#ff6b6b', 6);
+                }
+                if (pendulum.checkCollision(player.segment2)) {
+                    particles.emit(player.segment2.pos.x, player.segment2.pos.y, 8, '#ff6b6b', 6);
+                }
+            }
+
+            for (const laser of this.lasers) {
+                if (laser.checkCollision(player.segment1) || laser.checkCollision(player.segment2)) {
+                    return 'death';
+                }
+            }
+
+            return collided ? 'collision' : 'none';
+        }
+
+        draw(ctx, camera) {
+            for (const zone of this.gravityZones) {
+                zone.draw(ctx, camera);
+            }
+
+            for (const iceZone of this.iceZones) {
+                iceZone.draw(ctx, camera);
+            }
+
+            for (const slowZone of this.slowZones) {
+                slowZone.draw(ctx, camera);
+            }
+
+            for (const teleporter of this.teleporters) {
+                teleporter.draw(ctx, camera);
+            }
+
+            for (const platform of this.platforms) {
+                platform.draw(ctx, camera);
+            }
+
+            for (const movingPlatform of this.movingPlatforms) {
+                movingPlatform.draw(ctx, camera);
+            }
+
+            for (const pendulum of this.pendulums) {
+                pendulum.draw(ctx, camera);
+            }
+
+            for (const checkpoint of this.checkpoints) {
+                checkpoint.draw(ctx, camera);
+            }
+
+            for (const laser of this.lasers) {
+                laser.draw(ctx, camera);
+            }
+        }
+    }
+
+    class Particle {
+        constructor(x, y, vx, vy, life, color, size = 3) {
+            this.pos = new Vec2(x, y);
+            this.vel = new Vec2(vx, vy);
+            this.life = life;
+            this.maxLife = life;
+            this.color = color;
+            this.size = size;
+            this.alpha = 1;
+        }
+
+        update(dt) {
+            this.pos.add(Vec2.mult(this.vel, dt * 60));
+            this.vel.y += CONFIG.GRAVITY * 0.3 * dt;
+            this.vel.mult(0.98);
+            this.life -= dt;
+            this.alpha = this.life / this.maxLife;
+        }
+
+        isDead() {
+            return this.life <= 0;
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            ctx.globalAlpha = this.alpha;
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(
+                this.pos.x - camera.x,
+                this.pos.y - camera.y,
+                this.size,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    class ParticleSystem {
+        constructor() {
+            this.particles = [];
+        }
+
+        emit(x, y, count, color, speed = 5) {
+            for (let i = 0; i < count; i++) {
+                const angle = random(0, Math.PI * 2);
+                const vel = random(speed * 0.5, speed);
+                const vx = Math.cos(angle) * vel;
+                const vy = Math.sin(angle) * vel;
+                const life = random(0.5, 1.5);
+                const size = random(2, 5);
+                
+                this.particles.push(new Particle(x, y, vx, vy, life, color, size));
+            }
+        }
+
+        emitDirectional(x, y, count, color, dirX, dirY, spread = 0.5) {
+            for (let i = 0; i < count; i++) {
+                const spreadAngle = random(-spread, spread);
+                const angle = Math.atan2(dirY, dirX) + spreadAngle;
+                const vel = random(3, 8);
+                const vx = Math.cos(angle) * vel;
+                const vy = Math.sin(angle) * vel;
+                const life = random(0.3, 1.0);
+                const size = random(2, 4);
+                
+                this.particles.push(new Particle(x, y, vx, vy, life, color, size));
+            }
+        }
+
+        update(dt) {
+            for (let i = this.particles.length - 1; i >= 0; i--) {
+                this.particles[i].update(dt);
+                if (this.particles[i].isDead()) {
+                    this.particles.splice(i, 1);
+                }
+            }
+        }
+
+        draw(ctx, camera) {
+            for (const particle of this.particles) {
+                particle.draw(ctx, camera);
+            }
+        }
+
+        clear() {
+            this.particles = [];
+        }
+    }
+
+    class Trail {
+        constructor(maxLength = 20) {
+            this.points = [];
+            this.maxLength = maxLength;
+        }
+
+        addPoint(x, y) {
+            this.points.push(new Vec2(x, y));
+            if (this.points.length > this.maxLength) {
+                this.points.shift();
+            }
+        }
+
+        update(x, y) {
+            this.addPoint(x, y);
+        }
+
+        draw(ctx, camera, color = '#74b9ff', alpha = 0.6) {
+            if (this.points.length < 2) return;
+
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (let i = 1; i < this.points.length; i++) {
+                const fadeRatio = i / this.points.length;
+                ctx.globalAlpha = alpha * fadeRatio;
+                
+                ctx.beginPath();
+                ctx.moveTo(
+                    this.points[i - 1].x - camera.x,
+                    this.points[i - 1].y - camera.y
+                );
+                ctx.lineTo(
+                    this.points[i].x - camera.x,
+                    this.points[i].y - camera.y
+                );
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        clear() {
+            this.points = [];
+        }
+    }
+
+    class IceZone {
+        constructor(x, y, width, height) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.shimmer = 0;
+        }
+
+        update(dt) {
+            this.shimmer += dt * 3;
+        }
+
+        checkInside(body) {
+            return body.pos.x > this.x - this.width/2 &&
+                   body.pos.x < this.x + this.width/2 &&
+                   body.pos.y > this.y - this.height/2 &&
+                   body.pos.y < this.y + this.height/2;
+        }
+
+        applyEffect(body) {
+            if (this.checkInside(body)) {
+                body.friction = 0.05;
+                body.restitution = 0.95;
+            } else {
+                body.friction = 0.8;
+                body.restitution = 0.3;
+            }
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            ctx.globalAlpha = 0.2 + Math.sin(this.shimmer) * 0.1;
+            
+            const gradient = ctx.createLinearGradient(
+                this.x - this.width/2 - camera.x,
+                this.y - this.height/2 - camera.y,
+                this.x + this.width/2 - camera.x,
+                this.y + this.height/2 - camera.y
+            );
+            gradient.addColorStop(0, 'rgba(116, 185, 255, 0.3)');
+            gradient.addColorStop(0.5, 'rgba(162, 155, 254, 0.5)');
+            gradient.addColorStop(1, 'rgba(116, 185, 255, 0.3)');
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(
+                this.x - this.width/2 - camera.x,
+                this.y - this.height/2 - camera.y,
+                this.width,
+                this.height
+            );
+
+            ctx.strokeStyle = 'rgba(116, 185, 255, 0.6)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.strokeRect(
+                this.x - this.width/2 - camera.x,
+                this.y - this.height/2 - camera.y,
+                this.width,
+                this.height
+            );
+
+            ctx.restore();
+        }
+    }
+
+    class SlowZone {
+        constructor(x, y, radius, strength = 0.5) {
+            this.x = x;
+            this.y = y;
+            this.radius = radius;
+            this.strength = strength;
+            this.pulse = 0;
+        }
+
+        update(dt) {
+            this.pulse += dt * 2;
+        }
+
+        applyEffect(body) {
+            const dx = body.pos.x - this.x;
+            const dy = body.pos.y - this.y;
+            const distSq = dx * dx + dy * dy;
+            
+            if (distSq < this.radius * this.radius) {
+                body.vel.mult(1 - this.strength * 0.1);
+            }
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            
+            const pulseSize = this.radius + Math.sin(this.pulse) * 10;
+            ctx.globalAlpha = 0.15;
+            ctx.fillStyle = '#a29bfe';
+            ctx.beginPath();
+            ctx.arc(
+                this.x - camera.x,
+                this.y - camera.y,
+                pulseSize,
+                0,
+                Math.PI * 2
+            );
+            ctx.fill();
+
+            ctx.globalAlpha = 0.4;
+            ctx.strokeStyle = '#6c5ce7';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(
+                this.x - camera.x,
+                this.y - camera.y,
+                this.radius,
+                0,
+                Math.PI * 2
+            );
+            ctx.stroke();
+
+            ctx.restore();
+        }
+    }
+
+    class MovingPlatform extends Platform {
+        constructor(x, y, width, height, endX, endY, speed, type = 'normal') {
+            super(x, y, width, height, type);
+            this.startPos = new Vec2(x, y);
+            this.endPos = new Vec2(endX, endY);
+            this.progress = 0;
+            this.speed = speed;
+            this.direction = 1;
+            this.lastPos = new Vec2(x, y);
+        }
+
+        update(dt) {
+            super.update(dt);
+
+            this.lastPos.x = this.x;
+            this.lastPos.y = this.y;
+
+            this.progress += this.direction * this.speed * dt;
+
+            if (this.progress >= 1) {
+                this.progress = 1;
+                this.direction = -1;
+            } else if (this.progress <= 0) {
+                this.progress = 0;
+                this.direction = 1;
+            }
+
+            this.x = lerp(this.startPos.x, this.endPos.x, this.progress);
+            this.y = lerp(this.startPos.y, this.endPos.y, this.progress);
+        }
+
+        checkCollision(body) {
+            const result = super.checkCollision(body);
+            
+            if (result) {
+                const deltaX = this.x - this.lastPos.x;
+                const deltaY = this.y - this.lastPos.y;
+                
+                body.pos.x += deltaX;
+                body.pos.y += deltaY;
+                body.vel.x += deltaX * 0.5;
+                body.vel.y += deltaY * 0.5;
+            }
+
+            return result;
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+            ctx.strokeStyle = 'rgba(253, 203, 110, 0.3)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(this.startPos.x - camera.x, this.startPos.y - camera.y);
+            ctx.lineTo(this.endPos.x - camera.x, this.endPos.y - camera.y);
+            ctx.stroke();
+            ctx.restore();
+
+            super.draw(ctx, camera);
+        }
+    }
+
+    class Checkpoint {
+        constructor(x, y) {
+            this.x = x;
+            this.y = y;
+            this.radius = 30;
+            this.activated = false;
+            this.pulse = 0;
+        }
+
+        update(dt, player) {
+            this.pulse += dt * 5;
+
+            const dx = player.segment1.pos.x - this.x;
+            const dy = player.segment1.pos.y - this.y;
+            const distSq = dx * dx + dy * dy;
+
+            if (!this.activated && distSq < this.radius * this.radius) {
+                this.activated = true;
+                return true;
+            }
+
+            return false;
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+
+            const color = this.activated ? '#00b894' : '#fdcb6e';
+            const pulseSize = this.radius + Math.sin(this.pulse) * 5;
+
+            ctx.globalAlpha = 0.2;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(this.x - camera.x, this.y - camera.y, pulseSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(this.x - camera.x, this.y - camera.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            if (this.activated) {
+                ctx.fillStyle = color;
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('✓', this.x - camera.x, this.y - camera.y);
+            }
+
+            ctx.restore();
+        }
+    }
+
+    class LaserBeam {
+        constructor(x1, y1, x2, y2, onTime, offTime) {
+            this.x1 = x1;
+            this.y1 = y1;
+            this.x2 = x2;
+            this.y2 = y2;
+            this.onTime = onTime;
+            this.offTime = offTime;
+            this.timer = 0;
+            this.active = true;
+        }
+
+        update(dt) {
+            this.timer += dt;
+
+            if (this.active && this.timer >= this.onTime) {
+                this.active = false;
+                this.timer = 0;
+            } else if (!this.active && this.timer >= this.offTime) {
+                this.active = true;
+                this.timer = 0;
+            }
+        }
+
+        checkCollision(body) {
+            if (!this.active) return false;
+
+            const dx = this.x2 - this.x1;
+            const dy = this.y2 - this.y1;
+            const length = Math.sqrt(dx * dx + dy * dy);
+            const dirX = dx / length;
+            const dirY = dy / length;
+
+            const toBodyX = body.pos.x - this.x1;
+            const toBodyY = body.pos.y - this.y1;
+
+            const projection = toBodyX * dirX + toBodyY * dirY;
+
+            if (projection < 0 || projection > length) {
+                return false;
+            }
+
+            const closestX = this.x1 + dirX * projection;
+            const closestY = this.y1 + dirY * projection;
+
+            const distX = body.pos.x - closestX;
+            const distY = body.pos.y - closestY;
+            const distSq = distX * distX + distY * distY;
+
+            return distSq < body.radius * body.radius;
+        }
+
+        draw(ctx, camera) {
+            ctx.save();
+
+            if (this.active) {
+                ctx.globalAlpha = 0.3;
+                ctx.strokeStyle = '#d63031';
+                ctx.lineWidth = 15;
+                ctx.beginPath();
+                ctx.moveTo(this.x1 - camera.x, this.y1 - camera.y);
+                ctx.lineTo(this.x2 - camera.x, this.y2 - camera.y);
+                ctx.stroke();
+
+                ctx.globalAlpha = 1;
+                ctx.strokeStyle = '#ff7675';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(this.x1 - camera.x, this.y1 - camera.y);
+                ctx.lineTo(this.x2 - camera.x, this.y2 - camera.y);
+                ctx.stroke();
+            } else {
+                ctx.globalAlpha = 0.1;
+                ctx.strokeStyle = '#636e72';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(this.x1 - camera.x, this.y1 - camera.y);
+                ctx.lineTo(this.x2 - camera.x, this.y2 - camera.y);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+    }
+
+    class Teleporter {
+        constructor(x1, y1, x2, y2) {
+            this.pos1 = new Vec2(x1, y1);
+            this.pos2 = new Vec2(x2, y2);
+            this.radius = 40;
+            this.cooldown = 0;
+            this.pulse = 0;
+        }
+
+        update(dt) {
+            this.pulse += dt * 4;
+            if (this.cooldown > 0) {
+                this.cooldown -= dt;
+            }
+        }
+
+        checkTeleport(body) {
+            if (this.cooldown > 0) return false;
+
+            const dist1 = body.pos.dist(this.pos1);
+            const dist2 = body.pos.dist(this.pos2);
+
+            if (dist1 < this.radius) {
+                body.pos.x = this.pos2.x;
+                body.pos.y = this.pos2.y;
+                this.cooldown = 1.0;
+                return true;
+            } else if (dist2 < this.radius) {
+                body.pos.x = this.pos1.x;
+                body.pos.y = this.pos1.y;
+                this.cooldown = 1.0;
+                return true;
+            }
+
+            return false;
+        }
+
+        draw(ctx, camera) {
+            this.drawPortal(ctx, camera, this.pos1);
+            this.drawPortal(ctx, camera, this.pos2);
+
+            ctx.save();
+            ctx.globalAlpha = 0.2;
+            ctx.strokeStyle = '#00cec9';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([10, 10]);
+            ctx.beginPath();
+            ctx.moveTo(this.pos1.x - camera.x, this.pos1.y - camera.y);
+            ctx.lineTo(this.pos2.x - camera.x, this.pos2.y - camera.y);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        drawPortal(ctx, camera, pos) {
+            ctx.save();
+
+            const pulseSize = this.radius + Math.sin(this.pulse) * 8;
+
+            ctx.globalAlpha = 0.3;
+            const gradient = ctx.createRadialGradient(
+                pos.x - camera.x, pos.y - camera.y, 0,
+                pos.x - camera.x, pos.y - camera.y, pulseSize
+            );
+            gradient.addColorStop(0, 'rgba(0, 206, 201, 0.8)');
+            gradient.addColorStop(1, 'rgba(0, 206, 201, 0)');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(pos.x - camera.x, pos.y - camera.y, pulseSize, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = '#00cec9';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(pos.x - camera.x, pos.y - camera.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+    }
+
+    class WindSystem {
+        constructor() {
+            this.active = false;
+            this.force = new Vec2(0, 0);
+            this.timer = 0;
+            this.nextWindTime = random(CONFIG.WIND_INTERVAL_MIN, CONFIG.WIND_INTERVAL_MAX);
+        }
+
+        update(dt, player) {
+            this.timer += dt * 1000;
+
+            if (!this.active && this.timer >= this.nextWindTime) {
+                this.activate();
+            }
+
+            if (this.active && this.timer >= this.nextWindTime + CONFIG.WIND_DURATION) {
+                this.deactivate();
+            }
+
+            if (this.active) {
+                player.segment1.applyForce(this.force);
+                player.segment2.applyForce(this.force);
+            }
+        }
+
+        activate() {
+            this.active = true;
+            const direction = Math.random() < 0.5 ? -1 : 1;
+            this.force = new Vec2(direction * CONFIG.WIND_STRENGTH, 0);
+        }
+
+        deactivate() {
+            this.active = false;
+            this.force.mult(0);
+            this.timer = 0;
+            this.nextWindTime = random(CONFIG.WIND_INTERVAL_MIN, CONFIG.WIND_INTERVAL_MAX);
+        }
+
+        draw(ctx, width, height) {
+            if (!this.active) return;
+
+            ctx.save();
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = this.force.x > 0 ? '#74b9ff' : '#a29bfe';
+            
+            const numLines = 15;
+            for (let i = 0; i < numLines; i++) {
+                const y = (height / numLines) * i;
+                const offset = (Date.now() * 0.1 + i * 30) % width;
+                const x = this.force.x > 0 ? offset : width - offset;
+                
+                ctx.fillRect(x, y, 40, 3);
+            }
+            
+            ctx.restore();
+        }
+    }
+
+    class Game {
+        constructor() {
+            this.canvas = document.getElementById('gameCanvas');
+            this.ctx = this.canvas.getContext('2d');
+            
+            this.resize();
+            window.addEventListener('resize', () => this.resize());
+
+            this.camera = new Vec2(0, 0);
+            this.targetCamera = new Vec2(0, 0);
+            this.cameraShake = 0;
+            this.screenShake = new ScreenShake();
+
+            this.player = new Player(0, -50);
+            this.map = new MapGenerator();
+            this.wind = new WindSystem();
+            this.particles = new ParticleSystem();
+            this.sounds = new SoundSystem();
+            this.combo = new ComboSystem();
+            this.miniMap = new MiniMap(150, 200);
+            this.tutorial = new TutorialSystem();
+            this.animations = new AnimationSystem();
+
+            this.mouseDown = false;
+            this.mousePos = new Vec2(0, 0);
+            this.worldMousePos = new Vec2(0, 0);
+
+            this.startTime = Date.now();
+            this.playTime = 0;
+            this.falls = 0;
+            this.maxHeight = 0;
+            this.totalDistance = 0;
+            this.hookLaunches = 0;
+            this.successfulHooks = 0;
+            this.platformsTouched = 0;
+
+            this.records = {
+                bestHeight: 0,
+                bestTime: null,
+                leastFalls: null,
+                maxCombo: 0,
+                achievements: []
+            };
+
+            this.saveSystem = new SaveSystem();
+            this.loadGame();
+
+            this.setupInput();
+            this.lastTime = Date.now();
+            this.fps = 60;
+            this.frameCount = 0;
+            this.fpsTimer = 0;
+
+            this.backgroundStars = [];
+            this.generateStars();
+
+            this.paused = false;
+            this.showHelp = false;
+
+            this.animate();
+        }
+
+        generateStars() {
+            for (let i = 0; i < 200; i++) {
+                this.backgroundStars.push({
+                    x: random(-CONFIG.MAP_WIDTH, CONFIG.MAP_WIDTH),
+                    y: random(-CONFIG.MAP_HEIGHT, 500),
+                    size: random(1, 3),
+                    alpha: random(0.2, 0.8),
+                    twinkle: random(0, Math.PI * 2),
+                    speed: random(0.5, 2)
+                });
+            }
+        }
+
+        resize() {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+        }
+
+        setupInput() {
+            const getPos = (e) => {
+                const rect = this.canvas.getBoundingClientRect();
+                const touch = e.touches ? e.touches[0] : e;
+                return new Vec2(
+                    touch.clientX - rect.left,
+                    touch.clientY - rect.top
+                );
+            };
+
+            const start = (e) => {
+                e.preventDefault();
+                if (this.paused) return;
+                this.mouseDown = true;
+                this.mousePos = getPos(e);
+                this.updateWorldMouse();
+            };
+
+            const move = (e) => {
+                e.preventDefault();
+                this.mousePos = getPos(e);
+                this.updateWorldMouse();
+            };
+
+            const end = (e) => {
+                e.preventDefault();
+                if (this.mouseDown && !this.paused) {
+                    this.player.launchHook(this.worldMousePos.x, this.worldMousePos.y);
+                    this.hookLaunches++;
+                    this.sounds.play('hookLaunch');
+                    this.particles.emitDirectional(
+                        this.player.segment1.pos.x,
+                        this.player.segment1.pos.y,
+                        10,
+                        '#fdcb6e',
+                        this.worldMousePos.x - this.player.segment1.pos.x,
+                        this.worldMousePos.y - this.player.segment1.pos.y,
+                        0.2
+                    );
+                }
+                this.mouseDown = false;
+            };
+
+            this.canvas.addEventListener('mousedown', start);
+            this.canvas.addEventListener('mousemove', move);
+            this.canvas.addEventListener('mouseup', end);
+            this.canvas.addEventListener('mouseleave', end);
+
+            this.canvas.addEventListener('touchstart', start, { passive: false });
+            this.canvas.addEventListener('touchmove', move, { passive: false });
+            this.canvas.addEventListener('touchend', end, { passive: false });
+            this.canvas.addEventListener('touchcancel', end, { passive: false });
+
+            window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === ' ' && this.player.hook && !this.paused) {
+                    this.player.releaseHook();
+                }
+                if (e.key === 'r' || e.key === 'R') {
+                    if (confirm('Reset all progress and records?')) {
+                        this.saveSystem.clear();
+                        location.reload();
+                    }
+                }
+                if (e.key === 'p' || e.key === 'P' || e.key === 'Escape') {
+                    this.togglePause();
+                }
+                if (e.key === 'm' || e.key === 'M') {
+                    this.miniMap.toggle();
+                }
+                if (e.key === 's' || e.key === 'S') {
+                    this.sounds.toggle();
+                }
+                if (e.key === 'h' || e.key === 'H') {
+                    this.showHelp = !this.showHelp;
+                }
+            });
+        }
+
+        togglePause() {
+            this.paused = !this.paused;
+        }
+
+        updateWorldMouse() {
+            this.worldMousePos.x = this.mousePos.x + this.camera.x;
+            this.worldMousePos.y = this.mousePos.y + this.camera.y;
+        }
+
+        animate() {
+            requestAnimationFrame(() => this.animate());
+
+            const now = Date.now();
+            const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+            this.lastTime = now;
+
+            this.frameCount++;
+            this.fpsTimer += dt;
+            if (this.fpsTimer >= 1.0) {
+                this.fps = this.frameCount;
+                this.frameCount = 0;
+                this.fpsTimer = 0;
+            }
+
+            if (!this.paused) {
+                this.update(dt);
+            }
+            this.render();
+        }
+
+        update(dt) {
+            const oldHeight = this.player.getHeight();
+
+            this.player.update(this.map.gravityZones, dt);
+            this.player.updateHook(this.map.platforms, this.map.movingPlatforms);
+            
+            if (this.player.hookPoint && !this.player.hookLaunching && 
+                this.player.hook && this.successfulHooks === this.hookLaunches - 1) {
+                this.successfulHooks++;
+                this.combo.addAction();
+                this.sounds.play('hookAttach');
+                
+                if (this.combo.getCombo() > 5) {
+                    this.animations.add(new TextAnimation(
+                        this.player.segment1.pos.x,
+                        this.player.segment1.pos.y - 50,
+                        `COMBO x${this.combo.getCombo()}!`,
+                        '#fdcb6e',
+                        24,
+                        1.5
+                    ));
+                }
+            }
+            
+            const collisionResult = this.map.checkCollisions(this.player, this.particles);
+            
+            if (collisionResult === 'collision') {
+                this.sounds.play('collision');
+                this.platformsTouched++;
+            }
+            
+            if (collisionResult === 'death') {
+                this.handleDeath();
+            }
+
+            this.map.update(dt, this.player, this.particles);
+            this.wind.update(dt, this.player);
+            this.particles.update(dt);
+            this.combo.update();
+            this.tutorial.update(dt, this);
+            this.animations.update(dt);
+            this.screenShake.update(dt);
+
+            if (this.player.checkDeath()) {
+                this.handleDeath();
+            }
+
+            const currentHeight = this.player.getHeight();
+            if (currentHeight > this.maxHeight) {
+                const heightGain = currentHeight - this.maxHeight;
+                if (heightGain > 100) {
+                    this.animations.add(new TextAnimation(
+                        this.player.segment1.pos.x,
+                        this.player.segment1.pos.y - 40,
+                        `+${Math.floor(heightGain)}m!`,
+                        '#4ecdc4',
+                        20,
+                        1.0
+                    ));
+                }
+                this.maxHeight = currentHeight;
+                this.player.spawnPoint = this.player.segment1.pos.copy();
+            }
+
+            this.totalDistance += Math.abs(currentHeight - oldHeight);
+
+            this.playTime = (Date.now() - this.startTime) / 1000;
+
+            this.checkAchievements();
+            this.updateCamera(dt);
+            this.updateUI();
+            this.autoSave();
+        }
+
+        handleDeath() {
+            this.falls++;
+            this.combo.reset();
+            this.sounds.play('death');
+            this.screenShake.trigger(25, 0.5);
+            
+            this.particles.emit(
+                this.player.segment1.pos.x,
+                this.player.segment1.pos.y,
+                50,
+                '#ff6b6b',
+                15
+            );
+            
+            this.animations.add(new TextAnimation(
+                this.player.segment1.pos.x,
+                this.player.segment1.pos.y,
+                'FELL!',
+                '#ff6b6b',
+                32,
+                1.5
+            ));
+            
+            this.player.respawn();
+            
+            const deathScreen = document.getElementById('deathScreen');
+            deathScreen.style.display = 'flex';
+            setTimeout(() => {
+                deathScreen.style.display = 'none';
+            }, 1200);
+        }
+
+        checkAchievements() {
+            const achievements = this.records.achievements;
+
+            if (this.maxHeight >= 1000 && !achievements.includes('height_1k')) {
+                achievements.push('height_1k');
+                this.showAchievement('Climber', 'Reached 1000m');
+            }
+
+            if (this.maxHeight >= 5000 && !achievements.includes('height_5k')) {
+                achievements.push('height_5k');
+                this.showAchievement('Sky Walker', 'Reached 5000m');
+            }
+
+            if (this.maxHeight >= 9000 && !achievements.includes('height_9k')) {
+                achievements.push('height_9k');
+                this.showAchievement('Summit Master', 'Reached 9000m');
+            }
+
+            if (this.hookLaunches >= 100 && !achievements.includes('hooks_100')) {
+                achievements.push('hooks_100');
+                this.showAchievement('Hook Master', '100 hook launches');
+            }
+
+            if (this.falls >= 50 && !achievements.includes('falls_50')) {
+                achievements.push('falls_50');
+                this.showAchievement('Persistent', '50 falls survived');
+            }
+
+            if (this.combo.maxCombo >= 10 && !achievements.includes('combo_10')) {
+                achievements.push('combo_10');
+                this.showAchievement('Combo King', '10x combo achieved');
+            }
+
+            if (this.records.maxCombo < this.combo.maxCombo) {
+                this.records.maxCombo = this.combo.maxCombo;
+            }
+        }
+
+        showAchievement(title, desc) {
+            this.animations.add(new TextAnimation(
+                this.player.segment1.pos.x,
+                this.player.segment1.pos.y - 80,
+                `🏆 ${title}`,
+                '#ffd700',
+                28,
+                3.0
+            ));
+            console.log(`Achievement Unlocked: ${title} - ${desc}`);
+        }
+
+        updateCamera(dt) {
+            this.targetCamera.x = this.player.segment1.pos.x - this.canvas.width / 2;
+            this.targetCamera.y = this.player.segment1.pos.y - this.canvas.height / 2;
+
+            this.camera.x = lerp(this.camera.x, this.targetCamera.x, CONFIG.CAMERA_SMOOTHING);
+            this.camera.y = lerp(this.camera.y, this.targetCamera.y, CONFIG.CAMERA_SMOOTHING);
+
+            const shake = this.screenShake.getOffset();
+            this.camera.x += shake.x;
+            this.camera.y += shake.y;
+        }
+
+        updateUI() {
+            const heightEl = document.getElementById('height');
+            const timeEl = document.getElementById('time');
+            const fallsEl = document.getElementById('falls');
+            const hookHealthEl = document.getElementById('hookHealthVal');
+
+            heightEl.innerHTML = `Height: <span style="color: #4ecdc4;">${Math.floor(this.maxHeight)}m</span>`;
+            timeEl.innerHTML = `Time: <span style="color: #ffe66d;">${Math.floor(this.playTime)}s</span>`;
+            fallsEl.innerHTML = `Falls: <span style="color: #ff6b6b;">${this.falls}</span>`;
+            
+            const hookPercent = Math.floor((this.player.hookDurability / CONFIG.HOOK_DURABILITY_MAX) * 100);
+            let hookColor = '#95e1d3';
+            if (hookPercent < 50) hookColor = '#fdcb6e';
+            if (hookPercent < 25) hookColor = '#d63031';
+            hookHealthEl.style.color = hookColor;
+            hookHealthEl.textContent = `${hookPercent}%`;
+            
+            if (hookPercent < 25) {
+                document.getElementById('hookHealth').classList.add('warning');
+            } else {
+                document.getElementById('hookHealth').classList.remove('warning');
+            }
+
+            if (this.maxHeight > this.records.bestHeight) {
+                this.records.bestHeight = this.maxHeight;
+            }
+
+            const bestHeightEl = document.getElementById('bestHeight');
+            bestHeightEl.innerHTML = `🏆 Best Height: <span style="color: #4ecdc4;">${Math.floor(this.records.bestHeight)}m</span>`;
+
+            const bestTimeEl = document.getElementById('bestTime');
+            if (this.records.bestTime !== null) {
+                bestTimeEl.innerHTML = `⚡ Fastest: <span style="color: #ffe66d;">${Math.floor(this.records.bestTime)}s</span>`;
+            }
+
+            const leastFallsEl = document.getElementById('leastFalls');
+            if (this.records.leastFalls !== null) {
+                leastFallsEl.innerHTML = `💎 Least Falls: <span style="color: #95e1d3;">${this.records.leastFalls}</span>`;
+            }
+        }
+
+        autoSave() {
+            if (Math.random() < 0.005) {
+                this.saveGame();
+            }
+        }
+
+        saveGame() {
+            const data = {
+                maxHeight: this.maxHeight,
+                playTime: this.playTime,
+                falls: this.falls,
+                records: this.records,
+                spawnPoint: {
+                    x: this.player.spawnPoint.x,
+                    y: this.player.spawnPoint.y
+                },
+                hookLaunches: this.hookLaunches,
+                totalDistance: this.totalDistance,
+                platformsTouched: this.platformsTouched
+            };
+
+            this.saveSystem.save(data);
+        }
+
+        loadGame() {
+            const data = this.saveSystem.load();
+            
+            if (data) {
+                this.maxHeight = data.maxHeight || 0;
+                this.falls = data.falls || 0;
+                this.records = data.records || this.records;
+                this.hookLaunches = data.hookLaunches || 0;
+                this.totalDistance = data.totalDistance || 0;
+                this.platformsTouched = data.platformsTouched || 0;
+                
+                if (data.spawnPoint) {
+                    this.player.spawnPoint = new Vec2(data.spawnPoint.x, data.spawnPoint.y);
+                    this.player.respawn();
+                }
+            }
+        }
+
+        render() {
+            this.ctx.fillStyle = '#0a0a0f';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            this.drawBackground();
+
+            this.ctx.save();
+            
+            this.map.draw(this.ctx, this.camera);
+            this.particles.draw(this.ctx, this.camera);
+            this.animations.draw(this.ctx, this.camera);
+            this.player.draw(this.ctx, this.camera);
+
+            this.ctx.restore();
+
+            this.wind.draw(this.ctx, this.canvas.width, this.canvas.height);
+            this.drawUI();
+            this.miniMap.draw(this.ctx, this.player, [...this.map.platforms, ...this.map.movingPlatforms], 
+                             this.camera, this.canvas.width, this.canvas.height);
+            this.tutorial.draw(this.ctx, this.canvas.width, this.canvas.height);
+
+            if (this.combo.getCombo() > 1) {
+                this.drawCombo();
+            }
+
+            if (this.paused) {
+                this.drawPauseScreen();
+            }
+
+            if (this.showHelp) {
+                this.drawHelpScreen();
+            }
+        }
+
+        drawBackground() {
+            const gradient = this.ctx.createLinearGradient(0, 0, 0, this.canvas.height);
+            gradient.addColorStop(0, 'rgba(10, 10, 20, 0)');
+            gradient.addColorStop(0.5, 'rgba(30, 20, 50, 0.4)');
+            gradient.addColorStop(1, 'rgba(10, 10, 20, 0)');
+            this.ctx.fillStyle = gradient;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            for (const star of this.backgroundStars) {
+                star.twinkle += 0.02;
+                const alpha = star.alpha * (0.7 + Math.sin(star.twinkle) * 0.3);
+                
+                const parallaxY = star.y - this.camera.y * 0.1;
+                const parallaxX = star.x - this.camera.x * 0.1;
+                
+                const screenY = parallaxY % (this.canvas.height + 200);
+                
+                this.ctx.save();
+                this.ctx.globalAlpha = alpha;
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.beginPath();
+                this.ctx.arc(
+                    parallaxX % this.canvas.width,
+                    screenY,
+                    star.size,
+                    0,
+                    Math.PI * 2
+                );
+                this.ctx.fill();
+                this.ctx.restore();
+            }
+        }
+
+        drawCombo() {
+            const comboText = `${this.combo.getCombo()}x COMBO`;
+            const multiplierText = `${this.combo.getMultiplier().toFixed(1)}x`;
+
+            this.ctx.save();
+            this.ctx.font = 'bold 24px Courier New';
+            this.ctx.fillStyle = '#fdcb6e';
+            this.ctx.textAlign = 'center';
+            this.ctx.strokeStyle = '#000';
+            this.ctx.lineWidth = 4;
+            this.ctx.strokeText(comboText, this.canvas.width / 2, 150);
+            this.ctx.fillText(comboText, this.canvas.width / 2, 150);
+
+            this.ctx.font = '16px Courier New';
+            this.ctx.fillStyle = '#ffeaa7';
+            this.ctx.fillText(multiplierText, this.canvas.width / 2, 175);
+            this.ctx.restore();
+        }
+
+        drawPauseScreen() {
+            this.ctx.save();
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = 'bold 48px Courier New';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('PAUSED', this.canvas.width / 2, this.canvas.height / 2 - 50);
+
+            this.ctx.font = '20px Courier New';
+            this.ctx.fillText('Press P or ESC to resume', this.canvas.width / 2, this.canvas.height / 2 + 20);
+            this.ctx.fillText('Press H for help', this.canvas.width / 2, this.canvas.height / 2 + 50);
+            this.ctx.restore();
+        }
+
+        drawHelpScreen() {
+            this.ctx.save();
+            this.ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            this.ctx.fillStyle = '#fdcb6e';
+            this.ctx.font = 'bold 36px Courier New';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('CONTROLS & TIPS', this.canvas.width / 2, 80);
+
+            this.ctx.fillStyle = '#fff';
+            this.ctx.font = '18px Courier New';
+            this.ctx.textAlign = 'left';
+
+            const tips = [
+                'MOUSE/TOUCH: Click & drag to launch hook',
+                'SPACE: Release hook',
+                'P / ESC: Pause game',
+                'M: Toggle minimap',
+                'S: Toggle sound',
+                'R: Reset progress',
+                '',
+                'PLATFORM TYPES:',
+                '  White: Normal platforms',
+                '  Red: Crumbling platforms (disappear after touch)',
+                '  Purple: Phantom platforms (phase in/out)',
+                '  Green: Spring platforms (bounce upward)',
+                '  Yellow: Rotating obstacles',
+                '',
+                'MECHANICS:',
+                '  • Hook durability decreases with high force',
+                '  • Wind pushes you randomly',
+                '  • Gravity zones alter direction',
+                '  • Build combos by chaining successful hooks',
+                '  • Checkpoints save your progress',
+                '',
+                'Press H to close'
+            ];
+
+            let y = 150;
+            for (const tip of tips) {
+                this.ctx.fillText(tip, 100, y);
+                y += 30;
+            }
+
+            this.ctx.restore();
+        }
+
+        drawUI() {
+            if (this.mouseDown && !this.player.hook) {
+                this.ctx.save();
+                this.ctx.strokeStyle = 'rgba(253, 203, 110, 0.4)';
+                this.ctx.lineWidth = 2;
+                this.ctx.setLineDash([10, 10]);
+                this.ctx.beginPath();
+                this.ctx.moveTo(
+                    this.player.segment1.pos.x - this.camera.x,
+                    this.player.segment1.pos.y - this.camera.y
+                );
+                this.ctx.lineTo(this.mousePos.x, this.mousePos.y);
+                this.ctx.stroke();
+                this.ctx.restore();
+
+                this.ctx.save();
+                this.ctx.fillStyle = 'rgba(253, 203, 110, 0.6)';
+                this.ctx.beginPath();
+                this.ctx.arc(this.mousePos.x, this.mousePos.y, 8, 0, Math.PI * 2);
+                this.ctx.fill();
+                this.ctx.restore();
+            }
+
+            this.ctx.save();
+            this.ctx.strokeStyle = 'rgba(255, 107, 107, 0.3)';
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([5, 15]);
+            const deathY = CONFIG.DEATH_ZONE_Y - this.camera.y;
+            if (deathY > -100 && deathY < this.canvas.height + 100) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(0, deathY);
+                this.ctx.lineTo(this.canvas.width, deathY);
+                this.ctx.stroke();
+
+                this.ctx.font = '12px Courier New';
+                this.ctx.fillStyle = 'rgba(255, 107, 107, 0.5)';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('DEATH ZONE', this.canvas.width / 2, deathY - 5);
+            }
+            this.ctx.restore();
+
+            if (CONFIG.DEBUG) {
+                this.ctx.save();
+                this.ctx.fillStyle = '#fff';
+                this.ctx.font = '12px Courier New';
+                this.ctx.fillText(`FPS: ${this.fps}`, 10, this.canvas.height - 40);
+                this.ctx.fillText(`Hooks: ${this.hookLaunches}`, 10, this.canvas.height - 25);
+                this.ctx.fillText(`Success: ${this.successfulHooks}`, 10, this.canvas.height - 10);
+                this.ctx.restore();
+            }
+        }
+    }
+
+    window.addEventListener('load', () => {
+        new Game();
+    });
+</script>
+```
+
+</body>
+</html>
